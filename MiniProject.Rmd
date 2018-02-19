@@ -1,0 +1,104 @@
+---
+title: "MiniProject_Lee"
+author: Carmen Lee
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r environment}
+library(MASS)
+library(rpart)
+library(rpart.plot)
+set.seed(2)
+```
+
+## Dataset
+```{r load-data}
+songs <- read.csv('training_data.csv',header=T)
+```
+
+```{r data}
+head(songs)
+help(songs)
+names(songs)
+summary(songs)
+attach(songs)
+```
+
+## Logistic regression
+
+A very basic fitting with logistic regression with 2-fold. Half training dta and half validation data.
+
+```{r log-2fold}
+N <- nrow(data)   # 500 songs given
+train <- sample(x=1:N, size=N/2, replace=FALSE)
+songs.train <- songs[train,]
+songs.validate <- songs[-train,]
+```
+
+```{r log-2fold-allvariables}
+glm.fit <- glm(formula=label~., data=songs.train, family=binomial)
+summary(glm.fit)
+glm.probs <- predict(glm.fit, newdata=songs.validate, type="response")
+glm.pred <- rep("dislike", length(glm.probs))
+glm.pred[glm.probs>.5]<-"like"
+t = table(glm.pred, songs.validate$label)
+t
+mean(glm.pred == songs.validate$label)
+(t[1,1]+t[2,2])/sum(t)
+
+# Generating the 1 & 0 for the prediction
+dummy = ifelse(glm.probs>.5, 1, 0)
+```
+
+
+These variables are less likely to contribute to the overall model:
+
+- duration
+- loudness
+- liveness
+- key (added back because it seems to increase the correction rate)
+
+```{r log-2fold-fewervaribles}
+glm.fit <- glm(formula=label~danceability+energy+mode+speechiness+acousticness+instrumentalness+valence+tempo+time_signature+key, data=songs.train, family=binomial)
+summary(glm.fit)
+glm.probs <- predict(glm.fit, newdata=songs.validate, type="response")
+glm.pred <- rep("dislike", length(glm.probs))
+glm.pred[glm.probs>.5]<-"like"
+t = table(glm.pred, songs.validate$label)
+t
+mean(glm.pred == songs.validate$label)
+(t[1,1]+t[2,2])/sum(t)
+```
+
+
+## Trees
+A simplest tree using half of the data
+
+### using all variables
+
+```{r tree1}
+# Fit a classification tree
+song.tree = tree(label~., 
+                 songs.train)
+summary(song.tree)
+song.pred=predict(song.tree, songs.validate, type ="class")
+table(song.pred, songs.validate$label)
+mean(song.pred == songs.validate$label)
+```
+
+
+### using selected variables
+
+```{r tree2}
+# Fit a classification tree
+song.tree = tree(label~danceability+energy+mode+speechiness+acousticness+instrumentalness+valence+tempo+time_signature+key, 
+                 songs.train)
+summary(song.tree)
+song.pred=predict(song.tree, songs.validate, type ="class")
+table(song.pred, songs.validate$label)
+mean(song.pred == songs.validate$label)
+```
