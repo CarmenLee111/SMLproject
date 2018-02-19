@@ -1,0 +1,303 @@
+---
+title: "MiniProject_Lee"
+author: Carmen Lee
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r environment}
+library(MASS)
+library(class)
+library(rpart)
+library(rpart.plot)
+library(tree)
+set.seed(2)
+```
+
+## Dataset
+```{r load-data}
+songs <- read.csv('training_data.csv',header=T)
+attach(songs)
+```
+
+```{r data}
+head(songs) # 500 songs in total
+help(songs)
+names(songs)
+summary(songs)
+attach(songs)
+```
+
+
+## KNN - k selection 
+Using all data in songs
+
+```{r knn-different k training error}
+songs.knn <- songs[1:13]
+N.K <- 200 #biggest number i kNN to try
+
+error.training <- c()
+
+for (kt in 1:N.K)
+{
+  pred <- knn(train=songs.knn,test=songs.knn,cl=songs$label,k=kt)
+  error.training[kt] <- 1-mean(pred==songs$label)
+}
+plot(x=1:N.K,y=error.training,type="l",xlab="k",ylab="training error",main="training error for kNN")
+
+```
+
+```{r knn-different k validation error}
+train <- sample(nrow(songs), size = 300, replace = FALSE)
+songs.train <- songs[train,]
+songs.val <- songs[-train,]
+
+error.validation <- c()
+for (kt in 1:N.K)
+{
+pred <- knn(train=songs.train[1:13],test=songs.val[1:13],cl=songs.train[,14],k=kt)
+error.validation[kt] <- 1-mean(pred==songs.val$label)
+}
+plot(x=1:N.K,y=error.validation,type="l",xlab="k",ylab="validation error",main="validation set error for kNN")
+```
+
+
+```{r knn-different k test error with different samples}
+N.CV <- 10 #repeat 10 times
+error.crossvalidation1 <- matrix(0,N.K,N.CV)
+for (i in 1:N.CV)
+{
+  train <- sample(nrow(songs), size = 200, replace = FALSE)
+  songs.train <- songs[train,]
+  songs.val <- songs[-train,]
+  for (kt in 1:N.K)
+  {
+    pred <- knn(train=songs.train[1:13],test=songs.val[1:13],cl=songs.train$label,k=kt)
+    error.crossvalidation1[kt,i] <- 1-mean(pred==songs.val$label)
+  }
+}
+plot(x=1:N.K,y=rowMeans(error.crossvalidation1),type="l",xlab="k",
+     ylab="validation error",main="cross validation error for kNN")
+
+```
+
+
+```{r cv-knn-different k 10-fold}
+# k should probably be selected to be around 45
+N.CV = 10
+N.K = 200
+randomize.indices <- sample(nrow(songs), size = nrow(songs), replace = FALSE)
+songs.randomized <- songs[randomize.indices,]
+
+error.crossvalidation2 <- matrix(0,N.K,N.CV)
+for (i in 1:N.CV)
+{
+  start.index = (i-1)*ceiling(nrow(songs)/N.CV)+1
+  end.index = min(i*ceiling(nrow(songs)/N.CV),nrow(songs))
+  validation.indices <- seq(from = start.index, to = end.index, by = 1)
+  songs.train<- songs.randomized[-validation.indices,]
+  songs.val <- songs.randomized[validation.indices,]
+
+    for (kt in 1:N.K)
+  {
+    pred <- knn(train=songs.train[1:13],test=songs.val[1:13],cl=songs.train$label,k=kt)
+    error.crossvalidation2[kt,i] <- 1-mean(pred==songs.val$label)
+  }
+}
+plot(x=1:N.K,y=rowMeans(error.crossvalidation2),type="l",xlab="k",
+ylab="validation error",main="10-fold cross validation error for kNN")
+```
+
+## Different models 10 fold validation with bagging!!
+
+```{r all models - 10-fold}
+#set.seed(3)
+# Function for generating the prediction error
+ER <- function(y, yhat){
+  r <- 1-mean(y==yhat)
+  return(r)
+}
+
+k <- 45 # K is chosen given the analysis above
+
+N.cv = 10 # number of crossvalidation
+ER.CV = data.frame(lin.reg=double(), # intialize a data frame for storing results
+lda=double(),
+qda=double(),
+kNN=double(),
+rpart=double())
+randomize.indices <- sample(nrow(songs), size = nrow(songs), replace = FALSE)
+songs.randomized <- songs[randomize.indices,]
+for (i in 1:N.cv)
+{
+  start.index = (i-1)*ceiling(nrow(songs)/N.CV)+1
+  end.index = min(i*ceiling(nrow(songs)/N.CV),nrow(songs))
+  validation.indices <- seq(from = start.index, to = end.index, by = 1)
+  validation.data <- songs.randomized[validation.indices,]
+  training.data <- songs.randomized[-validation.indices,]
+  
+  glm.model <- glm(formula = label ~ ., data = training.data, family = binomial)
+  glm.probs <- predict(object = glm.model, newdata = validation.data, type="response")
+  glm.predictions <- rep("dislike",nrow(validation.data))
+  glm.predictions[glm.probs>.5] <- "like"
+  glm.ER <- ER(y = validation.data$label, yhat = glm.predictions)
+  
+  lda.model <- lda(formula = label ~ ., data = training.data)
+  lda.predictions <- predict(object = lda.model,newdata=validation.data)
+  lda.ER <- ER(y = validation.data$label, yhat = lda.predictions$class)
+  
+  qda.model <- qda(formula = label ~ ., data = training.data)
+  qda.predictions <- predict(object = qda.model,newdata=validation.data)
+  qda.ER <- ER(y = validation.data$label, yhat = qda.predictions$class)
+  
+  kNN.predictions <- knn(train = as.matrix(training.data[1:13]), 
+                         test = as.matrix(validation.data[1:13]),
+                         cl=training.data$label, k=45)
+  kNN.ER <- ER(y = validation.data$label, yhat = kNN.predictions)
+  
+  rpart.model <- rpart(label~., data=training.data)
+  rpart.probs <- predict(rpart.model, newdata=validation.data)
+  rpart.predictions <- rep("like", nrow(rpart.probs))
+  rpart.predictions[rpart.probs[,1] > 0.5] <- "dislike"
+  rpart.ER <- ER(y=validation.data$label, yhat=rpart.predictions)
+  
+  
+  ER.CV[nrow(ER.CV)+1,] <-c(glm.ER, lda.ER, qda.ER, kNN.ER, rpart.ER)
+}
+
+boxplot(ER.CV)
+colMeans(ER.CV)
+
+```
+
+## bagging with logistic and LDA (boostrapped data), 10 fold
+
+```{r bagging func}
+bagging<-function(training,testing,length_divisor=4,iterations=100)
+{
+  predictions<-foreach(m=1:iterations,.combine=cbind) %do% {
+    training_positions <- sample(nrow(training), size=floor((nrow(training)/length_divisor)))
+    train_pos<-1:nrow(training) %in% training_positions
+    lm_fit<-lm(y~x1+x2+x3,data=training[train_pos,])
+    predict(lm_fit,newdata=testing)
+  }
+  rowMeans(predictions)
+}
+```
+
+```{r boostrap}
+set.seed(3)
+
+N.CV = 10
+N.K = 200
+randomize.indices <- sample(nrow(songs), size = nrow(songs), replace = FALSE)
+songs.randomized <- songs[randomize.indices,]
+
+error.crossvalidation2 <- matrix(0,N.K,N.CV)
+for (i in 1:N.CV)
+{
+  start.index = (i-1)*ceiling(nrow(songs)/N.CV)+1
+  end.index = min(i*ceiling(nrow(songs)/N.CV),nrow(songs))
+  validation.indices <- seq(from = start.index, to = end.index, by = 1)
+  songs.train<- songs.randomized[-validation.indices,]
+  songs.val <- songs.randomized[validation.indices,]
+
+    for (kt in 1:N.K)
+  {
+    pred <- knn(train=songs.train[1:13],test=songs.val[1:13],cl=songs.train$label,k=kt)
+    error.crossvalidation2[kt,i] <- 1-mean(pred==songs.val$label)
+  }
+}
+
+# Generate new data sets and estimate mu for each data set
+B <- 1000
+muhat <- rep(0,B)
+for (i in 1:B) {
+  ### Bootstrap the data
+  y_tmp <- rnorm(n=n, mean=4, sd=1)
+  muhat[i] <- mean(y_tmp)
+}
+```
+
+
+
+
+
+# To be discarded
+## Logistic regression
+
+A very basic fitting with logistic regression with 2-fold. Half training dta and half validation data.
+
+```{r log-2fold}
+N <- nrow(songs)   # 500 songs given
+train <- sample(x=1:N, size=N/2, replace=FALSE)
+songs.train <- songs[train,]
+songs.validate <- songs[-train,]
+```
+
+```{r log-2fold-allvariables}
+glm.fit <- glm(formula=label~., data=songs.train, family=binomial)
+summary(glm.fit)
+glm.probs <- predict(glm.fit, newdata=songs.validate, type="response")
+glm.pred <- rep("dislike", length(glm.probs))
+glm.pred[glm.probs>.5]<-"like"
+t = table(glm.pred, songs.validate$label)
+t
+mean(glm.pred == songs.validate$label)
+(t[1,1]+t[2,2])/sum(t)
+
+# Generating the 1 & 0 for the prediction
+dummy = ifelse(glm.probs>.5, 1, 0)
+```
+
+These variables are less likely to contribute to the overall model:
+
+- duration
+- loudness
+- liveness
+- key (added back because it seems to increase the correction rate)
+
+```{r log-2fold-fewervaribles}
+glm.fit <- glm(formula=label~danceability+energy+mode+speechiness+acousticness+instrumentalness+valence+tempo+time_signature+key, data=songs.train, family=binomial)
+summary(glm.fit)
+glm.probs <- predict(glm.fit, newdata=songs.validate, type="response")
+glm.pred <- rep("dislike", length(glm.probs))
+glm.pred[glm.probs>.5]<-"like"
+t = table(glm.pred, songs.validate$label)
+t
+mean(glm.pred == songs.validate$label)
+(t[1,1]+t[2,2])/sum(t)
+```
+
+
+## Trees
+A simplest tree using half of the data
+
+### using all variables
+
+```{r tree1}
+# Fit a classification tree
+song.tree = tree(label~., 
+                 songs.train)
+summary(song.tree)
+song.pred=predict(song.tree, songs.validate, type ="class")
+table(song.pred, songs.validate$label)
+mean(song.pred == songs.validate$label)
+```
+
+
+### using selected variables
+Seems to have a higher test correction rate. 
+
+```{r tree2}
+# Fit a classification tree
+song.tree = tree(label~danceability+energy+mode+speechiness+acousticness+instrumentalness+valence+tempo+time_signature+key, 
+                 songs.train)
+summary(song.tree)
+song.pred=predict(song.tree, songs.validate, type ="class")
+table(song.pred, songs.validate$label)
+mean(song.pred == songs.validate$label)
+```
