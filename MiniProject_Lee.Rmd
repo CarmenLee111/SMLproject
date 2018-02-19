@@ -8,13 +8,14 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-```{r environment}
+```{r lib}
 library(MASS)
 library(class)
 library(rpart)
 library(rpart.plot)
 library(tree)
-set.seed(2)
+library(randomForest)
+library(gbm) # Gradient boosted machine
 ```
 
 ## Dataset
@@ -28,7 +29,6 @@ head(songs) # 500 songs in total
 help(songs)
 names(songs)
 summary(songs)
-attach(songs)
 ```
 
 
@@ -128,7 +128,9 @@ ER.CV = data.frame(lin.reg=double(), # intialize a data frame for storing result
 lda=double(),
 qda=double(),
 kNN=double(),
-rpart=double())
+rpart=double(),
+bag = double(),
+rf = double())
 randomize.indices <- sample(nrow(songs), size = nrow(songs), replace = FALSE)
 songs.randomized <- songs[randomize.indices,]
 for (i in 1:N.cv)
@@ -139,33 +141,66 @@ for (i in 1:N.cv)
   validation.data <- songs.randomized[validation.indices,]
   training.data <- songs.randomized[-validation.indices,]
   
+  # logistic linear regression
   glm.model <- glm(formula = label ~ ., data = training.data, family = binomial)
   glm.probs <- predict(object = glm.model, newdata = validation.data, type="response")
   glm.predictions <- rep("dislike",nrow(validation.data))
   glm.predictions[glm.probs>.5] <- "like"
   glm.ER <- ER(y = validation.data$label, yhat = glm.predictions)
   
+  # lda
   lda.model <- lda(formula = label ~ ., data = training.data)
   lda.predictions <- predict(object = lda.model,newdata=validation.data)
   lda.ER <- ER(y = validation.data$label, yhat = lda.predictions$class)
   
+  # qda
   qda.model <- qda(formula = label ~ ., data = training.data)
   qda.predictions <- predict(object = qda.model,newdata=validation.data)
   qda.ER <- ER(y = validation.data$label, yhat = qda.predictions$class)
   
+  # knn
   kNN.predictions <- knn(train = as.matrix(training.data[1:13]), 
                          test = as.matrix(validation.data[1:13]),
                          cl=training.data$label, k=45)
   kNN.ER <- ER(y = validation.data$label, yhat = kNN.predictions)
   
+  # tree
   rpart.model <- rpart(label~., data=training.data)
   rpart.probs <- predict(rpart.model, newdata=validation.data)
   rpart.predictions <- rep("like", nrow(rpart.probs))
   rpart.predictions[rpart.probs[,1] > 0.5] <- "dislike"
   rpart.ER <- ER(y=validation.data$label, yhat=rpart.predictions)
   
+  # bagging
+  B=1000
+  bag.fit <- randomForest(label~., data=training.data, ntree=B, mtry=ncol(songs)-1) #mtry uses all input variables in each node
+  bag.pred <- predict(bag.fit, newdata=validation.data)
+  bag.ER <- ER(y=validation.data$label, yhat=bag.pred)
   
-  ER.CV[nrow(ER.CV)+1,] <-c(glm.ER, lda.ER, qda.ER, kNN.ER, rpart.ER)
+  
+  # random forest
+  B=1000
+  rf.fit <- randomForest(label~., data=training.data, ntree=B) #mtry uses sqrt(p) by default
+  rf.pred <- predict(rf.fit, newdata=validation.data)
+  rf.ER <- ER(y=validation.data$label, yhat=rf.pred)
+  
+  
+  # Couldn't figure out how to use Gradient Boosted Machine
+  
+  # Gradient Boosted Machines in RR
+  # gbm.label <- as.numeric(training.data$label == "like")
+  # gbm.data <- cbind(training.data[,1:13], gbm.label)
+  # gbm.val.label <- as.numeric(validation.data$label == "like")
+  # gbm.val.data <- cbind(validation.data[,1:13], gbm.val.label)
+  # 
+  # gbm.fit <- gbm(gbm.label~., data=gbm.data, distribution="bernoulli", 
+  #                n.trees=700, shrinkage=0.05)
+  # gbm.pred <- predict(gbm.fit, newdata=gbm.val.data, n.trees=700)
+  # 
+  # gbm.ER <- ER(y=gbm.val.data$label, yhat=gbm.pred)
+  # 
+  
+  ER.CV[nrow(ER.CV)+1,] <-c(glm.ER, lda.ER, qda.ER, kNN.ER, rpart.ER, bag.ER, rf.ER)
 }
 
 boxplot(ER.CV)
@@ -173,56 +208,103 @@ colMeans(ER.CV)
 
 ```
 
-## bagging with logistic and LDA (boostrapped data), 10 fold
+```{r importance-bag}
+print("bag importance")
+importance(bag.fit)
 
-```{r bagging func}
-bagging<-function(training,testing,length_divisor=4,iterations=100)
-{
-  predictions<-foreach(m=1:iterations,.combine=cbind) %do% {
-    training_positions <- sample(nrow(training), size=floor((nrow(training)/length_divisor)))
-    train_pos<-1:nrow(training) %in% training_positions
-    lm_fit<-lm(y~x1+x2+x3,data=training[train_pos,])
-    predict(lm_fit,newdata=testing)
-  }
-  rowMeans(predictions)
-}
+print("rf importance")
+importance(rf.fit)
 ```
 
-```{r boostrap}
+
+
+```{r bag, random forest and gbm}
 set.seed(3)
 
-N.CV = 10
-N.K = 200
-randomize.indices <- sample(nrow(songs), size = nrow(songs), replace = FALSE)
-songs.randomized <- songs[randomize.indices,]
+train <- sample(x=1:nrow(songs), size=300, replace=FALSE)
+songs.train <- songs[train,]
+songs.val <- songs[-train,]
+N <- nrow(songs.train)
+Nt <- nrow(songs.val)
 
-error.crossvalidation2 <- matrix(0,N.K,N.CV)
-for (i in 1:N.CV)
-{
-  start.index = (i-1)*ceiling(nrow(songs)/N.CV)+1
-  end.index = min(i*ceiling(nrow(songs)/N.CV),nrow(songs))
-  validation.indices <- seq(from = start.index, to = end.index, by = 1)
-  songs.train<- songs.randomized[-validation.indices,]
-  songs.val <- songs.randomized[validation.indices,]
+# Fit a classfication tree
+rpart.fit <- rpart(label~., data=songs.train)
 
-    for (kt in 1:N.K)
-  {
-    pred <- knn(train=songs.train[1:13],test=songs.val[1:13],cl=songs.train$label,k=kt)
-    error.crossvalidation2[kt,i] <- 1-mean(pred==songs.val$label)
-  }
-}
+# Prediction on test data
+rpart.probs <- predict(rpart.fit, newdata=songs.val)
+rpart.pred <- rep("dislike", nrow(rpart.probs))
+rpart.pred[rpart.probs[,2] > .5] <- "like"
 
-# Generate new data sets and estimate mu for each data set
-B <- 1000
-muhat <- rep(0,B)
-for (i in 1:B) {
-  ### Bootstrap the data
-  y_tmp <- rnorm(n=n, mean=4, sd=1)
-  muhat[i] <- mean(y_tmp)
-}
+# test error rate
+cart.val.error <- mean(songs.val$label != rpart.pred)
+print("Single tree error")
+cart.val.error
+
+
+# bagging
+B=700
+bag.fit <- randomForest(label~., data=songs.train, ntree=B, mtry=ncol(songs)-1, do.trace=100) #mtry uses all input variables in each node
+bag.pred <- predict(bag.fit, newdata=songs.val)
+
+# test error rate
+bag.val.error <- mean(songs.val$label != bag.pred)
+print("Bagged tree")
+bag.val.error
+
+
+# random forest
+B=600
+rf.fit <- randomForest(label~., data=songs.train, ntree=B)
+rf.pred <- predict(rf.fit, newdata=songs.val)
+
+# test error rate
+rf.val.error <- mean(songs.val$label != rf.pred)
+print("Random forest error")
+rf.val.error
+
+
+# Gradient Boosted Machines in RR (still can't get it work)
+
+# songs.gbm <- songs
+# songs.gbm$label <- as.numeric(songs$label == "like")
+# 
+# train <- sample(x=1:nrow(songs), size=300, replace=FALSE)
+# songs.gbm.train <- songs.gbm[train,]
+# songs.gbm.val <- songs.gbm[-train,]
+# 
+# gbm.fit <- gbm(label~., data=songs.gbm.train, distribution="bernoulli",
+#                n.trees=700, shrinkage=0.05)
+# gbm.pred <- predict(gbm.fit, newdata=songs.gmb.val, n.trees=700)
+# gbm.val.error <- mean(songs.gbm.val$label != gbm.pred)
+# gbm.val.error
 ```
 
 
+
+
+## Method for result
+
+```{r test data}
+songs.test <- read.csv('songs_to_classify.csv',header=T)
+
+# bagging
+B=700
+bag.fit <- randomForest(label~., data=songs, ntree=B, mtry=ncol(songs)-1) #mtry uses all input variables in each node, use all data
+bag.pred <- predict(bag.fit, newdata=songs.test)
+bag.ans <- as.numeric(bag.pred == "like")
+bag.ans
+write.table(bag.ans, "bag.txt", row.names=FALSE, col.names=FALSE)
+
+# random forest
+B=600
+rf.fit <- randomForest(label~., data=songs, ntree=B)
+rf.pred <- predict(rf.fit, newdata=songs.test)
+rf.ans <- as.numeric(rf.pred == "like")
+rf.ans
+write.table(rf.ans, "rf.txt", row.names = FALSE,
+            col.names = FALSE)
+
+```
 
 
 
@@ -255,13 +337,15 @@ dummy = ifelse(glm.probs>.5, 1, 0)
 
 These variables are less likely to contribute to the overall model:
 
-- duration
-- loudness
-- liveness
+- duration (added back)
+- loudness (added back)
+- liveness (added back)
 - key (added back because it seems to increase the correction rate)
+- mode
+- time_signature
 
 ```{r log-2fold-fewervaribles}
-glm.fit <- glm(formula=label~danceability+energy+mode+speechiness+acousticness+instrumentalness+valence+tempo+time_signature+key, data=songs.train, family=binomial)
+glm.fit <- glm(formula=label~danceability+energy+speechiness+acousticness+instrumentalness+valence+tempo+key+liveness+loudness+duration, data=songs.train, family=binomial)
 summary(glm.fit)
 glm.probs <- predict(glm.fit, newdata=songs.validate, type="response")
 glm.pred <- rep("dislike", length(glm.probs))
@@ -294,7 +378,7 @@ Seems to have a higher test correction rate.
 
 ```{r tree2}
 # Fit a classification tree
-song.tree = tree(label~danceability+energy+mode+speechiness+acousticness+instrumentalness+valence+tempo+time_signature+key, 
+song.tree = tree(label~danceability+energy+speechiness+acousticness+instrumentalness+valence+tempo+key+liveness+loudness+duration, 
                  songs.train)
 summary(song.tree)
 song.pred=predict(song.tree, songs.validate, type ="class")
