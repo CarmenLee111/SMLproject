@@ -141,26 +141,32 @@ for (i in 1:N.cv)
   validation.data <- songs.randomized[validation.indices,]
   training.data <- songs.randomized[-validation.indices,]
   
-  # logistic linear regression
-  glm.model <- glm(formula = label ~ ., data = training.data, family = binomial)
+  # logistic linear regression (omitting  mode and time_signature)
+  glm.model <- glm(formula = label ~ danceability+energy+speechiness+acousticness+instrumentalness+valence+tempo+key+liveness+loudness+duration, data = training.data, family = binomial)
   glm.probs <- predict(object = glm.model, newdata = validation.data, type="response")
   glm.predictions <- rep("dislike",nrow(validation.data))
   glm.predictions[glm.probs>.5] <- "like"
   glm.ER <- ER(y = validation.data$label, yhat = glm.predictions)
   
-  # lda
-  lda.model <- lda(formula = label ~ ., data = training.data)
+  # lda (omitting  mode and time_signature)
+  lda.model <- lda(formula = label ~ danceability+energy+speechiness+acousticness+instrumentalness+valence+tempo+key+liveness+loudness+duration, data = training.data)
   lda.predictions <- predict(object = lda.model,newdata=validation.data)
   lda.ER <- ER(y = validation.data$label, yhat = lda.predictions$class)
   
-  # qda
-  qda.model <- qda(formula = label ~ ., data = training.data)
+  # qda (omitting  mode and time_signature)
+  qda.model <- qda(formula = label ~ danceability+energy+speechiness+acousticness+instrumentalness+valence+tempo+key+liveness+loudness+duration, data = training.data)
   qda.predictions <- predict(object = qda.model,newdata=validation.data)
   qda.ER <- ER(y = validation.data$label, yhat = qda.predictions$class)
   
-  # knn
-  kNN.predictions <- knn(train = as.matrix(training.data[1:13]), 
-                         test = as.matrix(validation.data[1:13]),
+  # knn (omitting  mode and time_signature)
+  training.data.knn = data.frame(training.data$danceability, training.data$energy, training.data$speechiness, training.data$acousticness, training.data$instrumentalness, training.data$valence, training.data$tempo, training.data$key, training.data$liveness, training.data$loudness, training.data$duration)
+  validation.data.knn = data.frame(validation.data$danceability, validation.data$energy, validation.data$speechiness, validation.data$acousticness, validation.data$instrumentalness, validation.data$valence, validation.data$tempo, validation.data$key, validation.data$liveness, validation.data$loudness, validation.data$duration)
+  
+  training.data.knn = scale(training.data.knn) #standardize the predictors
+  validation.data.knn = scale(validation.data.knn)
+  
+  kNN.predictions <- knn(train = as.matrix(training.data.knn), 
+                         test = as.matrix(validation.data.knn),
                          cl=training.data$label, k=45)
   kNN.ER <- ER(y = validation.data$label, yhat = kNN.predictions)
   
