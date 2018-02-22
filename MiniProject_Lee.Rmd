@@ -285,6 +285,7 @@ rf.val.error
 ## Method for result
 
 ```{r test data}
+set.seed(0)
 songs.test <- read.csv('songs_to_classify.csv',header=T)
 
 # bagging
@@ -302,6 +303,14 @@ rf.pred <- predict(rf.fit, newdata=songs.test)
 rf.ans <- as.numeric(rf.pred == "like")
 rf.ans
 write.table(rf.ans, "rf.txt", row.names = FALSE,
+            col.names = FALSE)
+
+# LDA
+lda.fit <- lda(label~., data = songs)
+lda.pred <- predict(object = lda.fit,newdata=songs.test)
+lda.ans <- as.numeric(lda.pred$class == "like")
+lda.ans
+write.table(lda.ans, "lda.txt", row.names = FALSE,
             col.names = FALSE)
 
 ```
