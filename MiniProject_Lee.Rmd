@@ -1,6 +1,6 @@
 ---
 title: "MiniProject"
-author: "Group S710"
+author: ""
 output:
   pdf_document: default
   html_document: default
